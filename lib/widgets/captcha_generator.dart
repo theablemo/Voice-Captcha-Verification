@@ -13,7 +13,7 @@ class CaptchaGenerator extends StatefulWidget {
   const CaptchaGenerator({
     required this.code,
     required this.drawData,
-    this.dotCount = 300,
+    this.dotCount = 350,
     this.width = 120,
     this.height = 40,
     this.backgroundColor = Colors.transparent,
@@ -30,7 +30,7 @@ class _HBCheckCodeState extends State<CaptchaGenerator> {
     Map drawData = widget.drawData;
 
     maxWidth = getTextSize("8" * widget.code.length,
-            TextStyle(fontWeight: FontWeight.values[3], fontSize: 4))
+            TextStyle(fontWeight: FontWeight.values[8], fontSize: 10))
         .width;
     return Container(
       color: widget.backgroundColor,
