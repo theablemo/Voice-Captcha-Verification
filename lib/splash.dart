@@ -36,7 +36,7 @@ class _RouteSplashState extends State<RouteSplash> {
       });
 
       Timer(Duration(milliseconds: 500), () {
-        Navigator.push(
+        Navigator.pushReplacement(
           context,
           PageTransition(
             type: PageTransitionType.fade,

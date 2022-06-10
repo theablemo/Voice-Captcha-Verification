@@ -1,20 +1,30 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:captcha_verification/splash.dart';
 import 'package:flutter/material.dart';
 
 import 'package:permission_handler/permission_handler.dart';
+// import 'package:flutter_sound_lite/flutter_sound.dart';
 import 'package:flutter_sound_lite/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:simple_tooltip/simple_tooltip.dart';
 import 'package:loading_indicator/loading_indicator.dart';
-import 'package:collection/collection.dart';
 import 'package:wave_loading_indicator/wave_progress.dart';
 import 'widgets/breathing_button.dart';
 import 'widgets/captcha_generator.dart';
+import 'package:flutter/services.dart';
+import 'package:toggle_switch/toggle_switch.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+enum Method {
+  w2v,
+  aligner,
+}
 
 void main() {
   runApp(const MyApp());
@@ -25,6 +35,10 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
     return MaterialApp(
       title: 'Voice Captcha Verification',
       theme: ThemeData(
@@ -54,7 +68,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool _receivingData = false;
   bool _showResult = false;
   late Timer _holdTimer;
-  late Timer _releasedTimer;
 
   late AnimationController _animationController;
   late Animation<Color?> _innerButtonColorAnimation;
@@ -66,13 +79,19 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   late Map _captchaDrawData;
   bool _newCaptchaWanted = true;
+  var _captchaWordsWidgets = <Widget>[];
 
-  String _speakedText = "";
+  String _googleText = "";
+  bool _googleSuccess = false;
   bool _success = false;
   String _captchaText = "";
-  String _debugText = "";
 
   var words = <String>[];
+
+  double fromTop = 0;
+  double fromSide = 0;
+
+  var _verficationMethod = Method.w2v;
 
   @override
   void initState() {
@@ -97,6 +116,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     });
 
     _myPlayer.openAudioSession();
+    // _myRecorder.openRecorder().then((_) {
+    //   setState(() {
+    //     _mRecorderIsInited = true;
+    //   });
+    // });
 
     _captchaText = widget.captchaString;
     words = widget.words;
@@ -107,24 +131,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   void dispose() {
     _animationController.dispose();
     _myRecorder.closeAudioSession();
-    _mRecorderIsInited = false;
     _myPlayer.closeAudioSession();
+    // _myRecorder.closeRecorder();
 
+    _mRecorderIsInited = false;
     super.dispose();
   }
 
   Future<void> playSound() async {
-    setState(() {
-      _debugText = "playing sound";
-    });
     await _myPlayer.startPlayer(
-        fromURI: await recordingFilePath,
-        // codec: Codec.pcm16WAV,
-        whenFinished: () {
-          setState(() {
-            _debugText = "finished playing";
-          });
-        });
+      fromURI: await recordingFilePath,
+      codec: Codec.pcm16WAV,
+    );
   }
 
   String get generateCaptchaText {
@@ -136,6 +154,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
   Future<String> get systemPath async {
     final dir = await getTemporaryDirectory();
+    // final dir = await getApplicationDocumentsDirectory();
     return dir.path;
   }
 
@@ -144,18 +163,36 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     return "$rawPath/recorded_captcha.wav";
   }
 
-  Future<void> record() async {
+  Future<void> deleteFile(File file) async {
+    await file.delete();
+  }
+
+  Future<bool> checkMicPermission() async {
     final status = await Permission.microphone.request();
-    if (status != PermissionStatus.granted) {
-      throw RecordingPermissionException(
-        "Microphone permission should be allowed.",
-      );
+    if (status == PermissionStatus.granted) {
+      return true;
+    } else {
+      return false;
     }
+  }
+
+  Future<void> record() async {
+    // final status = await Permission.microphone.request();
+    // if (status != PermissionStatus.granted) {
+    //   throw RecordingPermissionException(
+    //     "Microphone permission should be allowed.",
+    //   );
+    // }
+
+    final path = await recordingFilePath;
+    // deleteFile(File(path));
 
     if (_mRecorderIsInited) {
       await _myRecorder.startRecorder(
-        toFile: await recordingFilePath,
+        toFile: path,
         codec: Codec.pcm16WAV,
+        sampleRate: 16000,
+        numChannels: 1,
       );
     }
   }
@@ -168,7 +205,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     if (!_newCaptchaWanted) {
       return _captchaDrawData;
     }
-    // print("injaaa ${code}");
     List list = code.split(" ");
     double x = 0.0;
     double maxFontSize = 35.0;
@@ -225,62 +261,80 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     return checkCodeDrawData;
   }
 
+  String getRandomString(int length) {
+    String randomString = "";
+    final random = Random();
+    for (var i = 0; i < length; i++) {
+      int codeUnit = random.nextInt(26) + 97;
+      randomString += String.fromCharCode(codeUnit);
+    }
+    return randomString;
+  }
+
   Future<void> upload(String filename, String url) async {
-    setState(() {
-      _debugText = "upload start";
-    });
     setState(() {
       _receivingData = true;
     });
-    var request = http.MultipartRequest('POST', Uri.parse(url));
-    request.files.add(await http.MultipartFile.fromPath('file', filename));
 
-    // request.headers['Accept'] = '*/*';
-    // request.headers['Content-Type'] = 'multipart/form-data';
-    // request.headers['Connection'] = 'keep-alive';
-    request.fields['remark'] = 'filename';
+    final fName = '${getRandomString(15)}.wav';
+
+    var request = http.MultipartRequest('POST', Uri.parse(url));
+
+    request.fields['remark'] = _verficationMethod == Method.w2v
+        ? "1 $_captchaText"
+        : "2 $_captchaText";
+
+    var multiFile = await http.MultipartFile.fromPath(
+      'file',
+      filename,
+      contentType: MediaType('audio', 'wav'),
+      filename: fName,
+    );
+
+    request.files.add(
+      multiFile,
+    );
+
+    // request.files.add(
+    //   http.MultipartFile.fromBytes(
+    //     'file',
+    //     await File.fromUri(Uri.parse(filename)).readAsBytes(),
+    //     contentType: MediaType('audio', 'wav'),
+    //   ),
+    // );
+
     var res = await request.send();
-    setState(() {
-      _debugText = "${res.statusCode} gereftim";
-    });
+
+    var innerSuccess = false;
+    var googleSuccess = false;
+    var googleRecieved = "";
+
+    if (res.statusCode == 201) {
+      innerSuccess = true;
+    } else {
+      innerSuccess = false;
+    }
 
     res.stream.transform(utf8.decoder).listen((value) {
-      // print("daText:$value");
       String modifiedGotten = value.substring(1, value.length - 1);
-      setState(() {
-        _debugText = "got the data  $modifiedGotten";
+      print("value: $modifiedGotten");
 
+      googleRecieved = modifiedGotten;
+      if (_captchaText == modifiedGotten) {
+        googleSuccess = true;
+      } else {
+        googleSuccess = false;
+      }
+
+      setState(() {
         _receivingData = false;
         _showResult = true;
-        _speakedText = modifiedGotten;
-        _success = true;
-        final listofWordsSpeak = _speakedText.split(" ");
-        final listofWordsCaptcha = _captchaText.split(" ").reversed.toList();
-
-        // print("captch: $listofWordsCaptcha");
-        // print("spoken: $listofWordsSpeak");
-
-        // Function unOrdDeepEq = const DeepCollectionEquality.unordered().equals;
-        // _success = unOrdDeepEq(listofWordsCaptcha, listofWordsSpeak);
-
-        if (listofWordsCaptcha.length != listofWordsSpeak.length) {
-          _success = false;
-          return;
-        }
-        for (int i = 0; i < listofWordsSpeak.length; i++) {
-          // var similarity =
-          //     listofWordsSpeak[i].similarityTo(listofWordsCaptcha[i]);
-          var similarity =
-              minEditDistance(listofWordsSpeak[i], listofWordsCaptcha[i]);
-          // print(
-          //     "one: ${listofWordsSpeak[i]} two: ${listofWordsCaptcha[i]} => sim: $similarity");
-          if (similarity > 2) {
-            _success = false;
-            return;
-          }
-        }
-        _success = true;
+        // _speakedText = listOfMappedWords.join(" ");
+        _googleText = googleRecieved.split(" ").join("        ");
+        _googleSuccess = googleSuccess;
+        _success = innerSuccess;
       });
+
       Timer(Duration(seconds: 3), () {
         setState(() {
           _showResult = false;
@@ -291,30 +345,114 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         });
       });
     });
-  }
 
-  void checkOK() {
-    setState(() {});
-    // for (String wordSpoken in listofWordsSpeak) {
-    //   if (_captchaText.contains(wordSpoken)) {
-    //     setState(() {
-    //       _success = false;
-    //     });
-    //     break;
+    // res.stream.transform(utf8.decoder).listen((value) {
+    //   // print(value);
+    //   String modifiedGotten = value.substring(1, value.length - 1);
+    //   print(modifiedGotten);
+    //   var innerSucces = false;
+
+    //   if (modifiedGotten == "OK") {
+    //     innerSucces = true;
+    //   } else if (res.statusCode != 400) {
+    //     var r = RegExp("\s| ");
+    //     var listOfGotten = modifiedGotten.split(r);
+    //     listOfGotten = listOfGotten.where((x) => x != "").toList();
+    //     final listofWordsCaptcha = _captchaText.split(" ").toList();
+    //     print("gotten: $listOfGotten");
+
+    //     var listOfMappedWords = [];
+    //     var minED = 10000;
+    //     var selectedPoolWord = "";
+    //     for (String inputWord in listOfGotten) {
+    //       minED = 10000;
+    //       selectedPoolWord = "";
+    //       for (String poolWord in widget.words) {
+    //         var similarity = minEditDistance(inputWord, poolWord);
+    //         if (similarity <= minED) {
+    //           minED = similarity;
+    //           selectedPoolWord = poolWord;
+    //         }
+    //       }
+    //       listOfMappedWords.add(selectedPoolWord);
+    //     }
+    //     print("mapped: $listOfMappedWords");
+
+    //     innerSucces =
+    //         ListEquality().equals(listOfMappedWords, listofWordsCaptcha);
+
+    //     // if (idx >= 2) {
+    //     //   for (int i = 0; i < idx; i++) {
+    //     //     if (listOfMappedWords[i] != listofWordsCaptcha[i]) {
+    //     //       break;
+    //     //     }
+    //     //     if (i == idx - 1) {
+    //     //       innerSucces = true;
+    //     //     }
+    //     //   }
+
+    //     // }
     //   }
-    // }
+
+    //   setState(() {
+    //     _receivingData = false;
+    //     _showResult = true;
+    //     // _speakedText = listOfMappedWords.join(" ");
+    //     _speakedText = "";
+    //     _success = innerSucces;
+    //   });
+
+    //   Timer(Duration(seconds: 3), () {
+    //     setState(() {
+    //       _showResult = false;
+    //       if (_success) {
+    //         _newCaptchaWanted = true;
+    //         _captchaText = generateCaptchaText;
+    //       }
+    //     });
+    //   });
+    // });
   }
 
-  // Future<String> _read() async {
-  //   String text = "";
-  //   try {
-  //     final directory = await getApplicationDocumentsDirectory();
-  //     final file = File('${directory.path}/assets/words.txt');
-  //     text = await file.readAsString();
-  //   } catch (e) {
-  //     print("Couldn't read file");
+  // Future<void> newUpload(String filePath, String url) async {
+  //   setState(() {
+  //     _receivingData = true;
+  //   });
+
+  //   var dio = Dio();
+  //   FormData formData = FormData.fromMap({
+  //     "remark": _captchaText,
+  //     "file": await MultipartFile.fromFile(
+  //       filePath,
+  //     ),
+  //   });
+
+  //   var response = await dio.post(url, data: formData);
+
+  //   var innerSuccess = false;
+
+  //   if (response.statusCode == 201) {
+  //     innerSuccess = true;
+  //   } else {
+  //     innerSuccess = false;
   //   }
-  //   return text;
+  //   setState(() {
+  //     _receivingData = false;
+  //     _showResult = true;
+  //     // _speakedText = listOfMappedWords.join(" ");
+  //     _speakedText = "";
+  //     _success = innerSuccess;
+  //   });
+
+  //   Timer(Duration(seconds: 3), () {
+  //     setState(() {
+  //       _showResult = false;
+  //       if (_success) {
+  //         _newCaptchaWanted = true;
+  //         _captchaText = generateCaptchaText;
+  //       }
+  //     });
+  //   });
   // }
 
   int minEditDistance(String s1, String s2) {
@@ -357,6 +495,68 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     return v0[s2.length];
   }
 
+  List<Widget> captchaTextGenerator(MediaQueryData mediaQueryData) {
+    if (_newCaptchaWanted || (_success && _showResult)) {
+      var words = _captchaText.split(" ");
+      var res = <Widget>[];
+      int i = 1;
+      for (String word in words) {
+        fromSide = _newCaptchaWanted
+            ? Random().nextInt((mediaQueryData.size.width * 0.1).toInt()) + 20
+            : fromSide;
+        fromTop = _newCaptchaWanted
+            ? Random().nextInt((mediaQueryData.size.width * 0.18).toInt()) + 20
+            : fromTop;
+        res.add(
+          Positioned(
+            top: fromTop,
+            right: i == 1 ? fromSide : null,
+            left: i == 3 ? fromSide : null,
+            child: AnimatedDefaultTextStyle(
+              child: Text(
+                word,
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.right,
+              ),
+              duration: Duration(milliseconds: 400),
+              style: TextStyle(
+                color: _showResult && _success
+                    ? Colors.green
+                    : Color((Random().nextDouble() * 0xFFFFFF).toInt())
+                        .withOpacity(1.0),
+                fontSize:
+                    _showResult && _success ? 30 : Random().nextInt(25) + 20,
+                fontFamily: "Yekan",
+              ),
+            ),
+          ),
+        );
+        i++;
+      }
+      _captchaWordsWidgets = res;
+    }
+    // _newCaptchaWanted = false;
+    return _captchaWordsWidgets;
+  }
+
+  Method getMethodByIndex(int index) {
+    switch (index) {
+      case 0:
+        return Method.w2v;
+      default:
+        return Method.aligner;
+    }
+  }
+
+  int getIndexByMethod(Method method) {
+    switch (method) {
+      case Method.w2v:
+        return 0;
+      default:
+        return 1;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final _mediaQuery = MediaQuery.of(context);
@@ -379,14 +579,66 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             children: [
               Column(
                 children: [
+                  SizedBox(
+                    height: _mediaQuery.size.height * 0.05,
+                  ),
+                  // Text(
+                  //   "google",
+                  //   style: TextStyle(
+                  //     color: Colors.lightBlue,
+                  //     fontFamily: 'Sadgan',
+                  //     fontSize: 15,
+                  //     fontWeight: FontWeight.w100,
+                  //   ),
+                  // ),
+                  Padding(
+                    padding: EdgeInsets.only(
+                        // left: _mediaQuery.size.width * 0.2,
+                        // right: _mediaQuery.size.width * 0.2,
+                        // top: 5,
+                        ),
+                    child: ToggleSwitch(
+                      curve: Curves.easeOutExpo,
+                      animate: true,
+                      minWidth: 100.0,
+                      initialLabelIndex: getIndexByMethod(_verficationMethod),
+                      cornerRadius: 20,
+                      activeFgColor: Colors.black,
+                      inactiveBgColor: Colors.grey,
+                      inactiveFgColor: Colors.white,
+                      totalSwitches: 2,
+                      labels: [
+                        // '',
+                        'W2V',
+                        'Aligner',
+                      ],
+                      icons: [
+                        Icons.waving_hand_outlined,
+                        Icons.align_horizontal_center,
+                      ],
+                      activeBgColors: [
+                        // [Colors.blue],
+                        [Colors.deepOrangeAccent],
+                        [Colors.deepOrangeAccent]
+                      ],
+
+                      onToggle: (index) {
+                        _verficationMethod = getMethodByIndex(index!);
+                        print('switched to: $index');
+                      },
+                      // borderColor: [Colors.blue, Colors.pink, Colors.pink],
+                      borderWidth: 1,
+                      // customWidths: [60, 100, 100],
+                    ),
+                  ),
                   Padding(
                     padding: EdgeInsets.only(
                       left: _mediaQuery.size.width * 0.2,
                       right: _mediaQuery.size.width * 0.2,
-                      top: _mediaQuery.size.height * 0.1,
+                      top: 30,
                     ),
                     child: Text(
-                      "لطفا پس از فشار دادن دکمه ضبط صدا، سه کلمه ای در تصویر آمده را با صدای شیوا تکرار کنید.",
+                      "لطفا پس از فشار دادن دکمه ضبط صدا، سه کلمه ای که در تصویر آمده را با صدای شیوا تکرار کنید.",
                       textAlign: TextAlign.center,
                       textDirection: TextDirection.rtl,
                       style: TextStyle(
@@ -419,18 +671,39 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
               Column(
                 children: [
-                  Container(
-                    alignment: Alignment.center,
-                    child: CaptchaGenerator(
-                      drawData: getRandomData(
-                        _mediaQuery.size.width * 0.9,
-                        _mediaQuery.size.height * 0.2,
-                        350,
-                        _captchaText,
-                      ),
-                      code: _captchaText,
-                      height: _mediaQuery.size.height * 0.2,
-                      width: _mediaQuery.size.width * 0.9,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ...captchaTextGenerator(_mediaQuery),
+                        Container(
+                          alignment: Alignment.center,
+                          child: SizedBox(
+                            child: AnimatedSwitcher(
+                              duration: Duration(milliseconds: 500),
+                              child: _success && _showResult
+                                  ? SizedBox(
+                                      height: _mediaQuery.size.height * 0.2,
+                                      width: _mediaQuery.size.width * 0.9,
+                                    )
+                                  : CaptchaGenerator(
+                                      drawData: getRandomData(
+                                        _mediaQuery.size.width * 0.9,
+                                        _mediaQuery.size.height * 0.2,
+                                        350,
+                                        _captchaText,
+                                      ),
+                                      code: _captchaText,
+                                      height: _mediaQuery.size.height * 0.2,
+                                      width: _mediaQuery.size.width * 0.9,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   Align(
@@ -456,7 +729,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 duration: Duration(milliseconds: 1000),
                 child: _receivingData
                     ? SizedBox(
-                        height: 30,
+                        height: 50,
                         width: 90,
                         child: Padding(
                           padding: EdgeInsets.symmetric(vertical: 5),
@@ -472,24 +745,55 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                       )
                     : !_isRecording
                         ? SizedBox(
-                            height: 30,
-                            width: 150,
-                            child: Align(
-                              alignment: Alignment.center,
-                              child: Text(
-                                _speakedText,
-                                textAlign: TextAlign.center,
-                                textDirection: TextDirection.rtl,
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontFamily: "Sadgan",
-                                  decoration: TextDecoration.underline,
-                                ),
-                              ),
-                            ),
-                          )
+                            height: 50,
+                            child: AnimatedSwitcher(
+                              duration: Duration(milliseconds: 500),
+                              child: _showResult
+                                  ? Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            _googleText,
+                                            textAlign: TextAlign.center,
+                                            textDirection: TextDirection.rtl,
+                                            style: TextStyle(
+                                              color: Colors.grey[400],
+                                              fontFamily: "Sadgan",
+                                              fontSize:
+                                                  _mediaQuery.textScaleFactor *
+                                                      15,
+                                            ),
+                                          ),
+                                        ),
+                                        SvgPicture.asset(
+                                          'assets/google.svg',
+                                          semanticsLabel: 'Google Logo',
+                                          color: _googleSuccess
+                                              ? Colors.greenAccent
+                                              : Colors.redAccent,
+                                          width: _mediaQuery.size.width * 0.2,
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 10),
+                                          child: _googleSuccess
+                                              ? Icon(
+                                                  Icons.check_rounded,
+                                                  color: Colors.greenAccent,
+                                                  size: 25,
+                                                )
+                                              : Icon(
+                                                  Icons.close_rounded,
+                                                  color: Colors.redAccent,
+                                                  size: 25,
+                                                ),
+                                        )
+                                      ],
+                                    )
+                                  : null,
+                            ))
                         : SizedBox(
-                            height: 30,
+                            height: 50,
                             width: _mediaQuery.size.width * 0.5,
                             child: WaveProgress(
                               borderSize: 0,
@@ -505,7 +809,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
               Padding(
                 padding: EdgeInsets.only(
-                  bottom: _mediaQuery.size.height * 0.09,
+                  bottom: _mediaQuery.size.height * 0.05,
                 ),
                 child: Column(
                   children: [
@@ -531,7 +835,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                       glowColor:
                                           _glowButtonColorAnimation.value!,
                                       iconColor: Color(0xff251D3A),
-                                      onTapDown: (_) {
+                                      onTapDown: (_) async {
                                         setState(() {
                                           _showToolTip = false;
                                         });
@@ -541,10 +845,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                             _holdLongEnough = true;
                                           },
                                         );
+
+                                        var micPermission =
+                                            await checkMicPermission();
+
+                                        if (!micPermission) {
+                                          return;
+                                        }
+
+                                        await record();
                                         _animationController.forward();
-
-                                        record();
-
                                         setState(
                                           () {
                                             _isRecording = true;
@@ -552,7 +862,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                         );
                                       },
                                       onTapUp: (_) async {
-                                        stopRecorder();
+                                        await stopRecorder();
+
                                         _animationController.reverse();
                                         setState(
                                           () {
@@ -567,7 +878,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                               _showToolTip = true;
                                             },
                                           );
-                                          _releasedTimer = Timer(
+                                          Timer(
                                             Duration(seconds: 2),
                                             () {
                                               setState(
@@ -585,7 +896,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                         await upload(
                                           await recordingFilePath,
                                           "http://188.121.120.152/speech_recognition/file/upload/wave2vec-womodel/",
-                                        ).then((value) => checkOK());
+                                        );
                                       },
                                     ),
                                   )
@@ -645,10 +956,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         ),
                         height: 20,
                       ),
-                    )
+                    ),
                   ],
                 ),
               ),
+              Text(
+                "build 3.0.0",
+                style: TextStyle(
+                  fontFamily: "Roboto",
+                  color: Colors.grey,
+                  fontSize: 10,
+                ),
+              )
             ],
           ),
         ),

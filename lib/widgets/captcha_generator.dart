@@ -58,7 +58,7 @@ class HBCheckCodePainter extends CustomPainter {
     required this.drawData,
   });
 
-  Paint _paint = new Paint()
+  final Paint _paint = Paint()
     ..color = Colors.grey
     ..strokeCap = StrokeCap.square
     ..isAntiAlias = true
@@ -72,15 +72,15 @@ class HBCheckCodePainter extends CustomPainter {
     //为了能��居中显示移动画布
     canvas.translate(offsetX, 0);
     //从Map中取出值，直接绘制
-    for (var item in mList) {
-      TextPainter painter = item["painter"];
-      double x = item["x"];
-      double y = item["y"];
-      painter.paint(
-        canvas,
-        Offset(x, y),
-      );
-    }
+    // for (var item in mList) {
+    //   TextPainter painter = item["painter"];
+    //   double x = item["x"];
+    //   double y = item["y"];
+    //   painter.paint(
+    //     canvas,
+    //     Offset(x, y),
+    //   );
+    // }
     // //将画布平移回去
 
     canvas.translate(-offsetX, 0);
