@@ -1,16 +1,16 @@
-# captcha_verification
+Voice Captcha Verification
+==========================
 
-A new Flutter project.
+This project was a part of the Pezhvaak startup, co-founded by [Dr. Amir Najafi](https://scholar.google.com/citations?hl=en&user=N_zYPC0AAAAJ&view_op=list_works&sortby=pubdate) and [Dr. Abolfazl Motahari](https://scholar.google.com/citations?user=rJ-biB0AAAAJ&hl=en). In this project, 3 words are shown to the user and to verify that a humen-operator is using the system, the user should speak the words.
+This app uses two methods for speech-to-text, one is with a BERT model, developed by the Pezhvaak team, and one with the aligner developed by Google.
 
-## Getting Started
+# Usage
 
-This project is a starting point for a Flutter application.
+In order to use this project, you should install the [Flutter SDK](https://flutter.dev/). However, you can download the apk output from [here]().
 
-A few resources to get you started if this is your first Flutter project:
+# Demo
 
-- [Lab: Write your first Flutter app](https://flutter.dev/docs/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://flutter.dev/docs/cookbook)
+Following are some screenshots of the app:
 
-For help getting started with Flutter, view our
-[online documentation](https://flutter.dev/docs), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+![home](Doc/SC1.png)
+*Main page*

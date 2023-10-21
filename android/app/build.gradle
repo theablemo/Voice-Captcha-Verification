@@ -44,11 +44,14 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId "com.example.captcha_verification"
+        
         // minSdkVersion flutter.minSdkVersion
         // targetSdkVersion flutter.targetSdkVersion
+
         minSdkVersion 21
         targetSdkVersion 31
+
+        applicationId "com.example.captcha_verification"
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }

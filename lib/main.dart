@@ -961,7 +961,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 ),
               ),
               Text(
-                "build 3.0.0",
+                "Build 3.0.1",
                 style: TextStyle(
                   fontFamily: "Roboto",
                   color: Colors.grey,
