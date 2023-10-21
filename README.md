@@ -6,7 +6,7 @@ This app uses two methods for speech-to-text, one is with a BERT model, develope
 
 # Usage
 
-In order to use this project, you should install the [Flutter SDK](https://flutter.dev/). However, you can download the apk output from [here]().
+In order to use this project, you should install the [Flutter SDK](https://flutter.dev/). However, you can download the apk output from [here](https://raw.githubusercontent.com/theablemo/Voice-Captcha-Verification/master/output/app-arm64-v8a-release.apk).
 
 # Demo
 
